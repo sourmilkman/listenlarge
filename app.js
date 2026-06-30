@@ -1,8 +1,7 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.7";
+const APP_VERSION = "v1.1.8";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
-const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
 const SILENCE_THRESHOLD = 0.012;
 
@@ -144,9 +143,6 @@ function addCaption(text, sourceLang = "") {
   state.history = state.history.filter((item) => Date.now() - item.time <= 2 * 60 * 60 * 1000).slice(-240);
   setCaption(clean, lang);
   pulseCaption();
-  window.setTimeout(() => {
-    if (state.currentCaption === clean && state.listening) setCaption("Listening...", "", true);
-  }, CAPTION_HOLD_MS);
 }
 
 function createBrowserRecognizer() {
