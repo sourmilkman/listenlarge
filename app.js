@@ -1,6 +1,6 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.5";
+const APP_VERSION = "v1.1.6";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
 const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
@@ -123,10 +123,10 @@ function unlockSettings(open = false) {
 function inferSourceLanguage(text, language) {
   if (language) {
     const normalized = String(language).toLowerCase();
-    if (normalized.startsWith("th") || normalized.includes("thai")) return "th";
-    if (normalized.startsWith("en") || normalized.includes("english")) return "en";
+    if (normalized === "th" || normalized.startsWith("th-") || normalized.includes("thai")) return "th";
+    if (normalized === "en" || normalized.startsWith("en-") || normalized.includes("english")) return "en";
   }
-  return /[\u0E00-\u0E7F]/.test(text) ? "th" : "en";
+  return /[\u0E00-\u0E7F]/.test(text) ? "th" : "";
 }
 
 function addCaption(text, sourceLang = "") {
@@ -279,7 +279,7 @@ async function sendAudioChunk(blob) {
 
   if (!response.ok) throw new Error("Relay transcription failed");
   const data = await response.json();
-  if (data.text) addCaption(data.text, data.language || data.detected_language || data.source_language);
+  if (data.text) addCaption(data.text, data.language || data.detected_language || data.source_language || "");
 }
 
 async function startRelayListening() {

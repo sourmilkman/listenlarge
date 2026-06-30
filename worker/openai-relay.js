@@ -23,7 +23,8 @@ export default {
 
     const body = new FormData();
     body.append("file", audio, "speech.webm");
-    body.append("model", "gpt-4o-transcribe");
+    body.append("model", "whisper-1");
+    body.append("response_format", "verbose_json");
 
     const openai = await fetch("https://api.openai.com/v1/audio/translations", {
       method: "POST",
