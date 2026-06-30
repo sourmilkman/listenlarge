@@ -1,6 +1,6 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.1";
+const APP_VERSION = "v1.1.2";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
 const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
@@ -91,9 +91,9 @@ function setSize(size) {
   state.size = size;
   localStorage.setItem("listen-large-size", size);
   const map = {
-    large: "clamp(3.2rem, 9vw, 6rem)",
-    huge: "clamp(3.8rem, 10.5vw, 7rem)",
-    max: "clamp(4.4rem, 12vw, 8rem)"
+    large: "clamp(2.55rem, 7.2vw, 4.8rem)",
+    huge: "clamp(3.05rem, 8.4vw, 5.6rem)",
+    max: "clamp(3.5rem, 9.6vw, 6.4rem)"
   };
   document.documentElement.style.setProperty("--font-size-transcript", map[size] || map.huge);
 }
