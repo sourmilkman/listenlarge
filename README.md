@@ -18,7 +18,7 @@ Settings are hidden from the daily UI. Open them by either:
 - adding `?settings=1` to the app URL, or
 - tapping the **Listen Large** title five times.
 
-The settings panel controls transcription method, relay URL, browser language, text size, and white/yellow high-contrast theme.
+The settings panel controls transcription method, relay URL, browser language, text size, and white/yellow high-contrast theme. Thai/English auto-detection requires the OpenAI relay; browser speech recognition can only listen in one selected language at a time.
 
 ## Transcription Options
 

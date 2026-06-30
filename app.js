@@ -1,6 +1,6 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.6";
+const APP_VERSION = "v1.1.7";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
 const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
@@ -83,12 +83,17 @@ function updateListeningUi() {
 }
 
 function mobileNeedsRelay() {
-  return !SpeechRecognition && state.engine !== "relay";
+  return !SpeechRecognition && effectiveEngine() !== "relay";
 }
 
 function showMobileRelayPrompt() {
   setStatus("Use relay mode", "error");
   setCaption("Tap title 5 times, choose relay mode", "", true);
+}
+
+function effectiveEngine() {
+  if (state.language === "auto" && state.relayUrl) return "relay";
+  return state.engine;
 }
 
 function browserRecognitionLanguage() {
@@ -157,7 +162,7 @@ function createBrowserRecognizer() {
     setStatus(message, "error");
   };
   recognition.onend = () => {
-    if (state.listening && state.engine === "browser") {
+    if (state.listening && effectiveEngine() === "browser") {
       window.setTimeout(() => {
         try {
           recognition.start();
@@ -347,7 +352,15 @@ async function startListening() {
   updateListeningUi();
   setCaption("Listening...", "", true);
   await requestWakeLock();
-  const started = state.engine === "relay" ? await startRelayListening() : await startBrowserListening();
+  const engine = effectiveEngine();
+  if (state.language === "auto" && engine === "browser") {
+    setStatus("Relay needed for Auto", "error");
+    setCaption("Auto Thai needs relay mode", "", true);
+    state.listening = false;
+    updateListeningUi();
+    return;
+  }
+  const started = engine === "relay" ? await startRelayListening() : await startBrowserListening();
   if (!started) {
     state.listening = false;
     updateListeningUi();
@@ -379,11 +392,13 @@ function saveSettings() {
   state.engine = els.engineSelect.value;
   state.relayUrl = els.relayUrl.value.trim();
   state.language = els.languageSelect.value;
+  if (state.language === "auto" && state.relayUrl) state.engine = "relay";
   localStorage.setItem("listen-large-engine", state.engine);
   localStorage.setItem("listen-large-relay-url", state.relayUrl);
   localStorage.setItem("listen-large-language", state.language);
   setSize(els.sizeSelect.value);
   setTheme(els.themeSelect.value);
+  els.engineSelect.value = state.engine;
   if (wasListening) {
     stopListening().then(startListening);
   }
