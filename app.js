@@ -1,17 +1,34 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+const BUILD_MODEL = "GPT-5 Codex / ddfc609";
+const CAPTION_HOLD_MS = 1800;
+const REPEAT_HOLD_MS = 5000;
+const SILENCE_THRESHOLD = 0.012;
 
 const state = {
   listening: false,
   language: localStorage.getItem("listen-large-language") || "auto",
-  size: localStorage.getItem("listen-large-size") || "large",
+  size: localStorage.getItem("listen-large-size") || "huge",
+  theme: localStorage.getItem("listen-large-theme") || "white",
   engine: localStorage.getItem("listen-large-engine") || "browser",
   relayUrl: localStorage.getItem("listen-large-relay-url") || "",
-  transcript: "",
-  interim: "",
+  settingsUnlocked: localStorage.getItem("listen-large-settings-unlocked") === "1",
+  currentCaption: "",
+  lastCaption: "",
+  currentLang: "",
+  history: [],
   recognition: null,
   mediaRecorder: null,
   stream: null,
-  chunkTimer: null
+  chunkTimer: null,
+  wakeLock: null,
+  audioContext: null,
+  analyser: null,
+  meterFrame: null,
+  meterLevel: 0,
+  segmentPeak: 0,
+  repeatTimer: null,
+  titleTaps: []
 };
 
 const els = {
@@ -20,45 +37,48 @@ const els = {
   statusStrip: document.querySelector("#statusStrip"),
   statusText: document.querySelector("#statusText"),
   transcript: document.querySelector("#transcript"),
-  clearButton: document.querySelector("#clearButton"),
-  languageButtons: [...document.querySelectorAll("[data-language]")],
-  sizeButtons: [...document.querySelectorAll("[data-size]")],
+  buildBadge: document.querySelector("#buildBadge"),
+  captionStage: document.querySelector(".caption-stage"),
+  brandButton: document.querySelector("#brandButton"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
   engineSelect: document.querySelector("#engineSelect"),
   relayUrl: document.querySelector("#relayUrl"),
-  saveSettings: document.querySelector("#saveSettings")
+  languageSelect: document.querySelector("#languageSelect"),
+  sizeSelect: document.querySelector("#sizeSelect"),
+  themeSelect: document.querySelector("#themeSelect"),
+  saveSettings: document.querySelector("#saveSettings"),
+  historyButton: document.querySelector("#historyButton"),
+  repeatButton: document.querySelector("#repeatButton"),
+  historyDialog: document.querySelector("#historyDialog"),
+  historyList: document.querySelector("#historyList"),
+  clearHistoryButton: document.querySelector("#clearHistoryButton")
 };
 
-function setStatus(text, tone = "idle") {
+function setStatus(text, tone = "active") {
   els.statusText.textContent = text;
   els.statusStrip.classList.toggle("idle", tone === "idle");
   els.statusStrip.classList.toggle("error", tone === "error");
 }
 
-function renderTranscript() {
-  const text = [state.transcript, state.interim].filter(Boolean).join(state.transcript && state.interim ? " " : "");
-  els.transcript.textContent = text || "Tap Start Listening.";
-  els.transcript.classList.toggle("placeholder", !text);
-  requestAnimationFrame(() => {
-    els.transcript.scrollTop = els.transcript.scrollHeight;
-  });
+function setCaption(text, sourceLang = "", placeholder = false) {
+  state.currentCaption = text;
+  state.currentLang = sourceLang;
+  els.transcript.textContent = text || (state.listening ? "Listening..." : "Stopped");
+  els.transcript.classList.toggle("placeholder", placeholder || !text);
+  els.transcript.classList.toggle("lang-th", sourceLang === "th");
+  els.transcript.classList.toggle("lang-en", sourceLang === "en");
+}
+
+function pulseCaption() {
+  els.captionStage.classList.remove("pulse");
+  void els.captionStage.offsetWidth;
+  els.captionStage.classList.add("pulse");
 }
 
 function updateListeningUi() {
   els.listenButton.classList.toggle("listening", state.listening);
-  els.listenLabel.textContent = state.listening ? "Stop Listening" : "Start Listening";
-}
-
-function setLanguage(language) {
-  state.language = language;
-  localStorage.setItem("listen-large-language", language);
-  els.languageButtons.forEach((button) => {
-    const active = button.dataset.language === language;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-checked", String(active));
-  });
-  if (state.recognition) state.recognition.lang = browserRecognitionLanguage();
+  els.listenLabel.textContent = state.listening ? "Stop" : "Start";
 }
 
 function browserRecognitionLanguage() {
@@ -70,24 +90,48 @@ function setSize(size) {
   state.size = size;
   localStorage.setItem("listen-large-size", size);
   const map = {
-    comfortable: "clamp(1.8rem, 7vw, 3.4rem)",
-    large: "clamp(2.35rem, 9vw, 5rem)",
-    huge: "clamp(3rem, 12vw, 6.8rem)"
+    large: "clamp(5rem, 15vw, 7.5rem)",
+    huge: "clamp(6rem, 17vw, 9rem)",
+    max: "clamp(7rem, 20vw, 10.5rem)"
   };
-  document.documentElement.style.setProperty("--font-size-transcript", map[size]);
-  els.sizeButtons.forEach((button) => {
-    const active = button.dataset.size === size;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-checked", String(active));
-  });
+  document.documentElement.style.setProperty("--font-size-transcript", map[size] || map.huge);
 }
 
-function appendText(text) {
+function setTheme(theme) {
+  state.theme = theme;
+  localStorage.setItem("listen-large-theme", theme);
+  document.documentElement.dataset.theme = theme;
+}
+
+function unlockSettings(open = false) {
+  state.settingsUnlocked = true;
+  localStorage.setItem("listen-large-settings-unlocked", "1");
+  els.settingsButton.hidden = false;
+  if (open) els.settingsDialog.showModal();
+}
+
+function inferSourceLanguage(text, language) {
+  if (language) {
+    const normalized = String(language).toLowerCase();
+    if (normalized.startsWith("th") || normalized.includes("thai")) return "th";
+    if (normalized.startsWith("en") || normalized.includes("english")) return "en";
+  }
+  return /[\u0E00-\u0E7F]/.test(text) ? "th" : "en";
+}
+
+function addCaption(text, sourceLang = "") {
   const clean = text.trim();
   if (!clean) return;
-  state.transcript = state.transcript ? `${state.transcript}\n${clean}` : clean;
-  state.interim = "";
-  renderTranscript();
+  window.clearTimeout(state.repeatTimer);
+  const lang = inferSourceLanguage(clean, sourceLang);
+  state.lastCaption = clean;
+  state.history.push({ text: clean, lang, time: Date.now() });
+  state.history = state.history.filter((item) => Date.now() - item.time <= 2 * 60 * 60 * 1000).slice(-240);
+  setCaption(clean, lang);
+  pulseCaption();
+  window.setTimeout(() => {
+    if (state.currentCaption === clean && state.listening) setCaption("Listening...", "", true);
+  }, CAPTION_HOLD_MS);
 }
 
 function createBrowserRecognizer() {
@@ -97,19 +141,20 @@ function createBrowserRecognizer() {
   recognition.interimResults = true;
   recognition.lang = browserRecognitionLanguage();
 
-  recognition.onstart = () => setStatus("Listening...", "active");
+  recognition.onstart = () => setStatus("Listening...");
   recognition.onerror = (event) => {
     const message = event.error === "not-allowed" ? "Microphone blocked" : "Speech error";
     setStatus(message, "error");
   };
   recognition.onend = () => {
     if (state.listening && state.engine === "browser") {
-      try {
-        recognition.start();
-      } catch {
-        setStatus("Tap Start again", "error");
-        stopListening();
-      }
+      window.setTimeout(() => {
+        try {
+          recognition.start();
+        } catch {
+          setStatus("Listening paused", "error");
+        }
+      }, 250);
     }
   };
   recognition.onresult = (event) => {
@@ -120,9 +165,8 @@ function createBrowserRecognizer() {
       if (result.isFinal) finalText += result[0].transcript;
       else interimText += result[0].transcript;
     }
-    if (finalText.trim()) appendText(finalText);
-    state.interim = interimText.trim();
-    renderTranscript();
+    if (finalText.trim()) addCaption(finalText, browserRecognitionLanguage());
+    else if (interimText.trim()) setCaption(interimText.trim(), inferSourceLanguage(interimText, browserRecognitionLanguage()));
   };
   return recognition;
 }
@@ -130,10 +174,16 @@ function createBrowserRecognizer() {
 async function startBrowserListening() {
   state.recognition = createBrowserRecognizer();
   if (!state.recognition) {
-    setStatus("Browser mode unavailable", "error");
+    setStatus("Use relay mode", "error");
     return false;
   }
   try {
+    navigator.mediaDevices?.getUserMedia?.({ audio: true })
+      ?.then((stream) => {
+        state.stream = stream;
+        startMeter(stream);
+      })
+      .catch(() => {});
     state.recognition.start();
     return true;
   } catch {
@@ -147,13 +197,68 @@ function getMimeType() {
   return options.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
 }
 
+function startMeter(stream) {
+  stopMeter();
+  if (!AudioContextClass) return;
+  state.audioContext = new AudioContextClass();
+  const source = state.audioContext.createMediaStreamSource(stream);
+  state.analyser = state.audioContext.createAnalyser();
+  state.analyser.fftSize = 1024;
+  source.connect(state.analyser);
+  const data = new Uint8Array(state.analyser.fftSize);
+  const tick = () => {
+    state.analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (const value of data) {
+      const centered = (value - 128) / 128;
+      sum += centered * centered;
+    }
+    state.meterLevel = Math.sqrt(sum / data.length);
+    state.segmentPeak = Math.max(state.segmentPeak, state.meterLevel);
+    document.documentElement.style.setProperty("--meter", String(Math.min(1, state.meterLevel * 9)));
+    state.meterFrame = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function stopMeter() {
+  if (state.meterFrame) cancelAnimationFrame(state.meterFrame);
+  state.meterFrame = null;
+  state.analyser = null;
+  state.audioContext?.close().catch(() => {});
+  state.audioContext = null;
+  state.meterLevel = 0;
+  state.segmentPeak = 0;
+  document.documentElement.style.setProperty("--meter", "0");
+}
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator) || !state.listening) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request("screen");
+    state.wakeLock.addEventListener("release", () => {
+      state.wakeLock = null;
+    });
+  } catch {
+    state.wakeLock = null;
+  }
+}
+
+async function releaseWakeLock() {
+  const lock = state.wakeLock;
+  state.wakeLock = null;
+  await lock?.release().catch(() => {});
+}
+
 async function sendAudioChunk(blob) {
   if (!blob.size || !state.relayUrl) return;
+  if (state.segmentPeak < SILENCE_THRESHOLD) {
+    setStatus("Listening...");
+    return;
+  }
+
   const form = new FormData();
   form.append("audio", blob, "speech.webm");
-  if (state.language !== "auto") {
-    form.append("language", state.language.startsWith("th") ? "th" : "en");
-  }
 
   const response = await fetch(state.relayUrl.replace(/\/$/, "") + "/transcribe", {
     method: "POST",
@@ -162,7 +267,7 @@ async function sendAudioChunk(blob) {
 
   if (!response.ok) throw new Error("Relay transcription failed");
   const data = await response.json();
-  if (data.text) appendText(data.text);
+  if (data.text) addCaption(data.text, data.language || data.detected_language || data.source_language);
 }
 
 async function startRelayListening() {
@@ -173,6 +278,7 @@ async function startRelayListening() {
 
   try {
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    startMeter(state.stream);
     const mimeType = getMimeType();
     state.mediaRecorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
     let chunks = [];
@@ -183,14 +289,18 @@ async function startRelayListening() {
     state.mediaRecorder.onstop = async () => {
       const blob = new Blob(chunks, { type: state.mediaRecorder?.mimeType || "audio/webm" });
       chunks = [];
+      if (!state.listening) {
+        setStatus("Stopped", "idle");
+        return;
+      }
       try {
-        setStatus("Transcribing...", "active");
+        setStatus("Transcribing...");
         await sendAudioChunk(blob);
         if (state.listening) startRelaySegment();
-        else setStatus("Ready", "idle");
+        else setStatus("Stopped", "idle");
       } catch {
         setStatus("Relay error", "error");
-        stopListening();
+        if (state.listening) startRelaySegment();
       }
     };
 
@@ -203,17 +313,21 @@ async function startRelayListening() {
 }
 
 function startRelaySegment() {
-  if (!state.mediaRecorder || !state.listening) return;
+  if (!state.mediaRecorder || !state.listening || state.mediaRecorder.state !== "inactive") return;
+  state.segmentPeak = 0;
   state.mediaRecorder.start();
-  setStatus("Listening...", "active");
+  setStatus("Listening...");
   state.chunkTimer = window.setTimeout(() => {
     if (state.mediaRecorder?.state === "recording") state.mediaRecorder.stop();
   }, 6500);
 }
 
 async function startListening() {
+  if (state.listening) return;
   state.listening = true;
   updateListeningUi();
+  setCaption("Listening...", "", true);
+  await requestWakeLock();
   const started = state.engine === "relay" ? await startRelayListening() : await startBrowserListening();
   if (!started) {
     state.listening = false;
@@ -221,28 +335,68 @@ async function startListening() {
   }
 }
 
-function stopListening() {
+async function stopListening() {
   state.listening = false;
   updateListeningUi();
   window.clearTimeout(state.chunkTimer);
+  window.clearTimeout(state.repeatTimer);
   if (state.recognition) {
     state.recognition.onend = null;
     state.recognition.stop();
     state.recognition = null;
   }
   if (state.mediaRecorder?.state === "recording") state.mediaRecorder.stop();
+  state.mediaRecorder = null;
   state.stream?.getTracks().forEach((track) => track.stop());
   state.stream = null;
-  state.interim = "";
-  renderTranscript();
-  if (!els.statusStrip.classList.contains("error")) setStatus("Ready", "idle");
+  stopMeter();
+  await releaseWakeLock();
+  setCaption("Stopped", "", true);
+  if (!els.statusStrip.classList.contains("error")) setStatus("Stopped", "idle");
 }
 
 function saveSettings() {
+  const wasListening = state.listening;
   state.engine = els.engineSelect.value;
   state.relayUrl = els.relayUrl.value.trim();
+  state.language = els.languageSelect.value;
   localStorage.setItem("listen-large-engine", state.engine);
   localStorage.setItem("listen-large-relay-url", state.relayUrl);
+  localStorage.setItem("listen-large-language", state.language);
+  setSize(els.sizeSelect.value);
+  setTheme(els.themeSelect.value);
+  if (wasListening) {
+    stopListening().then(startListening);
+  }
+}
+
+function renderHistory() {
+  els.historyList.replaceChildren();
+  if (!state.history.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No captions yet.";
+    els.historyList.append(empty);
+    return;
+  }
+  for (const item of [...state.history].reverse()) {
+    const row = document.createElement("li");
+    const time = document.createElement("span");
+    time.className = "history-time";
+    time.textContent = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }).format(item.time);
+    row.append(time, item.text);
+    els.historyList.append(row);
+  }
+}
+
+function showRepeat() {
+  const cutoff = Date.now() - 30000;
+  const text = state.history.filter((item) => item.time >= cutoff).map((item) => item.text).join(" ");
+  if (!text) return;
+  setCaption(text, "");
+  window.clearTimeout(state.repeatTimer);
+  state.repeatTimer = window.setTimeout(() => {
+    setCaption(state.lastCaption || "Listening...", state.currentLang, !state.lastCaption);
+  }, REPEAT_HOLD_MS);
 }
 
 els.listenButton.addEventListener("click", () => {
@@ -250,23 +404,28 @@ els.listenButton.addEventListener("click", () => {
   else startListening();
 });
 
-els.languageButtons.forEach((button) => {
-  button.addEventListener("click", () => setLanguage(button.dataset.language));
+els.repeatButton.addEventListener("click", showRepeat);
+els.historyButton.addEventListener("click", () => {
+  renderHistory();
+  els.historyDialog.showModal();
+});
+els.clearHistoryButton.addEventListener("click", () => {
+  state.history = [];
+  renderHistory();
 });
 
-els.sizeButtons.forEach((button) => {
-  button.addEventListener("click", () => setSize(button.dataset.size));
-});
-
-els.clearButton.addEventListener("click", () => {
-  state.transcript = "";
-  state.interim = "";
-  renderTranscript();
-  setStatus("Ready", "idle");
+els.brandButton.addEventListener("click", () => {
+  const now = Date.now();
+  state.titleTaps = [...state.titleTaps.filter((time) => now - time < 2500), now];
+  if (state.titleTaps.length >= 5) unlockSettings(true);
 });
 
 els.settingsButton.addEventListener("click", () => els.settingsDialog.showModal());
 els.saveSettings.addEventListener("click", saveSettings);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.listening && !state.wakeLock) requestWakeLock();
+});
 
 window.addEventListener("beforeunload", stopListening);
 
@@ -274,9 +433,18 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
+if (new URLSearchParams(location.search).get("settings") === "1") unlockSettings(true);
+else if (state.settingsUnlocked) unlockSettings(false);
+
 els.engineSelect.value = state.engine;
 els.relayUrl.value = state.relayUrl;
-setLanguage(state.language);
+els.languageSelect.value = state.language;
+els.sizeSelect.value = state.size;
+els.themeSelect.value = state.theme;
+els.buildBadge.textContent = BUILD_MODEL;
 setSize(state.size);
-setStatus("Ready", "idle");
-renderTranscript();
+setTheme(state.theme);
+setStatus("Starting...");
+setCaption("Listening...", "", true);
+updateListeningUi();
+window.setTimeout(startListening, 300);

@@ -3,19 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#000000" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Listen Large" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Listen Large</title>
     <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-180.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="icons/apple-touch-icon-167.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="icons/apple-touch-icon-152.png" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <h1>Listen Large</h1>
-        <button class="icon-button" id="settingsButton" type="button" aria-label="Settings">
+        <button class="brand-button" id="brandButton" type="button" aria-label="Listen Large">Listen Large</button>
+        <div class="build-badge" id="buildBadge" aria-label="Build model"></div>
+        <button class="icon-button settings-launcher" id="settingsButton" type="button" aria-label="Settings" hidden>
           <svg aria-hidden="true" viewBox="0 0 24 24">
             <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm8.3 3.8c0-.5-.1-1-.2-1.5l2-1.5-2-3.5-2.4 1a9.8 9.8 0 0 0-2.6-1.5L14.8 2H9.2L8.8 5a9.8 9.8 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5c-.1.5-.2 1-.2 1.5s.1 1 .2 1.5l-2 1.5 2 3.5 2.4-1a9.8 9.8 0 0 0 2.6 1.5l.4 3h5.6l.4-3a9.8 9.8 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5c.1-.5.2-1 .2-1.5Z" />
           </svg>
@@ -23,56 +27,48 @@
       </header>
 
       <section class="status-strip" id="statusStrip" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="statusText">Ready</span>
+        <span class="mic-meter" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+        <span id="statusText">Starting...</span>
       </section>
 
-      <section class="transcript-card" aria-label="Transcript">
-        <div class="transcript" id="transcript" tabindex="0">Tap Start Listening.</div>
+      <section class="caption-stage" aria-label="Live caption">
+        <div class="transcript placeholder" id="transcript" tabindex="0">Listening...</div>
       </section>
 
-      <button class="listen-button" id="listenButton" type="button">
-        <svg aria-hidden="true" viewBox="0 0 24 24">
-          <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" />
-          <path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V22M8.5 22h7" />
-        </svg>
-        <span id="listenLabel">Start Listening</span>
-      </button>
-
-      <section class="control-panel" aria-label="Controls">
-        <div class="field-group">
-          <div class="group-label">Language</div>
-          <div class="segmented" role="radiogroup" aria-label="Language">
-            <button class="segment active" type="button" role="radio" aria-checked="true" data-language="auto">Auto</button>
-            <button class="segment" type="button" role="radio" aria-checked="false" data-language="en-US">English</button>
-            <button class="segment" type="button" role="radio" aria-checked="false" data-language="th-TH">ไทย</button>
-          </div>
-        </div>
-
-        <div class="field-group">
-          <div class="group-label">Text Size</div>
-          <div class="segmented size-picker" role="radiogroup" aria-label="Text size">
-            <button class="segment" type="button" role="radio" aria-checked="false" data-size="comfortable">A</button>
-            <button class="segment active" type="button" role="radio" aria-checked="true" data-size="large">A</button>
-            <button class="segment" type="button" role="radio" aria-checked="false" data-size="huge">A</button>
-          </div>
-        </div>
-
-        <div class="button-row">
-          <button class="secondary-button quiet" id="clearButton" type="button">
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3" />
-            </svg>
-            <span>Clear</span>
-          </button>
-        </div>
+      <section class="quick-actions" aria-label="Actions">
+        <button class="secondary-button" id="historyButton" type="button">History</button>
+        <button class="listen-button" id="listenButton" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" />
+            <path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V22M8.5 22h7" />
+          </svg>
+          <span id="listenLabel">Stop</span>
+        </button>
+        <button class="secondary-button" id="repeatButton" type="button">Repeat</button>
       </section>
     </main>
+
+    <dialog class="history-modal" id="historyDialog" aria-labelledby="historyTitle">
+      <form method="dialog">
+        <div class="settings-head">
+          <h2 id="historyTitle">History</h2>
+          <button class="icon-button" value="close" aria-label="Close history">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+        <ol class="history-list" id="historyList"></ol>
+        <button class="save-button danger" id="clearHistoryButton" type="button">Clear</button>
+      </form>
+    </dialog>
 
     <dialog class="settings" id="settingsDialog" aria-labelledby="settingsTitle">
       <form method="dialog">
         <div class="settings-head">
-          <h2 id="settingsTitle">Settings</h2>
+          <h2 id="settingsTitle">Caregiver Settings</h2>
           <button class="icon-button" value="close" aria-label="Close settings">
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <path d="M6 6l12 12M18 6 6 18" />
@@ -93,9 +89,34 @@
           <input id="relayUrl" type="url" inputmode="url" placeholder="https://your-worker.example.workers.dev" />
         </label>
 
+        <label class="setting-row">
+          <span>Browser language</span>
+          <select id="languageSelect">
+            <option value="auto">Auto from device</option>
+            <option value="en-US">English</option>
+            <option value="th-TH">Thai</option>
+          </select>
+        </label>
+
+        <label class="setting-row">
+          <span>Text size</span>
+          <select id="sizeSelect">
+            <option value="large">Large</option>
+            <option value="huge">Huge</option>
+            <option value="max">Maximum</option>
+          </select>
+        </label>
+
+        <label class="setting-row">
+          <span>Theme</span>
+          <select id="themeSelect">
+            <option value="white">White on black</option>
+            <option value="yellow">Yellow on black</option>
+          </select>
+        </label>
+
         <p class="settings-note">
-          GitHub Pages cannot store a private OpenAI key. Use the relay option with the included Cloudflare Worker
-          when you want stronger English and Thai transcription.
+          Open this panel with <strong>?settings=1</strong> or five taps on the Listen Large title.
         </p>
 
         <button class="save-button" id="saveSettings" value="close">Save Settings</button>

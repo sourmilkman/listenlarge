@@ -1,11 +1,14 @@
-const CACHE_NAME = "listen-large-v1";
+const CACHE_NAME = "listen-large-v2";
 const APP_SHELL = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
   "manifest.webmanifest",
-  "icons/icon.svg"
+  "icons/icon.svg",
+  "icons/apple-touch-icon-180.png",
+  "icons/apple-touch-icon-167.png",
+  "icons/apple-touch-icon-152.png"
 ];
 
 self.addEventListener("install", (event) => {

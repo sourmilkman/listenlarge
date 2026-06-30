@@ -16,7 +16,6 @@ export default {
 
     const incoming = await request.formData();
     const audio = incoming.get("audio");
-    const language = incoming.get("language");
 
     if (!audio || typeof audio === "string") {
       return withCors(Response.json({ error: "Missing audio file" }, { status: 400 }));
@@ -25,9 +24,8 @@ export default {
     const body = new FormData();
     body.append("file", audio, "speech.webm");
     body.append("model", "gpt-4o-transcribe");
-    if (language) body.append("language", language);
 
-    const openai = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const openai = await fetch("https://api.openai.com/v1/audio/translations", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${env.OPENAI_API_KEY}`
