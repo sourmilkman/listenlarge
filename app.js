@@ -1,6 +1,6 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.4";
+const APP_VERSION = "v1.1.5";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
 const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
@@ -14,7 +14,6 @@ const state = {
   engine: localStorage.getItem("listen-large-engine") || "browser",
   relayUrl: localStorage.getItem("listen-large-relay-url") || "",
   settingsUnlocked: localStorage.getItem("listen-large-settings-unlocked") === "1",
-  userStarted: false,
   currentCaption: "",
   lastCaption: "",
   currentLang: "",
@@ -352,10 +351,6 @@ async function startListening() {
   if (!started) {
     state.listening = false;
     updateListeningUi();
-    if (!state.userStarted && !mobileNeedsRelay()) {
-      setStatus("Tap Start", "idle");
-      setCaption("Tap Start to begin", "", true);
-    }
   }
 }
 
@@ -424,7 +419,6 @@ function showRepeat() {
 }
 
 els.listenButton.addEventListener("click", () => {
-  state.userStarted = true;
   if (state.listening) stopListening();
   else startListening();
 });
@@ -471,8 +465,7 @@ setSize(state.size);
 setTheme(state.theme);
 if (mobileNeedsRelay()) showMobileRelayPrompt();
 else {
-  setStatus("Starting...");
-  setCaption("Listening...", "", true);
+  setStatus("Tap Start", "idle");
+  setCaption("Tap Start to begin", "", true);
 }
 updateListeningUi();
-window.setTimeout(startListening, 300);
