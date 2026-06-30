@@ -1,6 +1,6 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.8";
+const APP_VERSION = "v1.1.9";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
 const REPEAT_HOLD_MS = 5000;
 const SILENCE_THRESHOLD = 0.012;
@@ -14,6 +14,7 @@ const state = {
   relayUrl: localStorage.getItem("listen-large-relay-url") || "",
   settingsUnlocked: localStorage.getItem("listen-large-settings-unlocked") === "1",
   currentCaption: "",
+  currentOriginal: "",
   lastCaption: "",
   currentLang: "",
   history: [],
@@ -61,10 +62,23 @@ function setStatus(text, tone = "active") {
   els.statusStrip.classList.toggle("error", tone === "error");
 }
 
-function setCaption(text, sourceLang = "", placeholder = false) {
+function setCaption(text, sourceLang = "", placeholder = false, originalText = "") {
   state.currentCaption = text;
+  state.currentOriginal = originalText;
   state.currentLang = sourceLang;
-  els.transcript.textContent = text || (state.listening ? "Listening..." : "Stopped");
+  els.transcript.replaceChildren();
+  const displayText = text || (state.listening ? "Listening..." : "Stopped");
+  if (originalText && originalText !== text) {
+    const original = document.createElement("span");
+    original.className = "caption-original";
+    original.textContent = originalText;
+    const translation = document.createElement("span");
+    translation.className = "caption-translation";
+    translation.textContent = text;
+    els.transcript.append(original, translation);
+  } else {
+    els.transcript.textContent = displayText;
+  }
   els.transcript.classList.toggle("placeholder", placeholder || !text);
   els.transcript.classList.toggle("lang-th", sourceLang === "th");
   els.transcript.classList.toggle("lang-en", sourceLang === "en");
@@ -133,15 +147,16 @@ function inferSourceLanguage(text, language) {
   return /[\u0E00-\u0E7F]/.test(text) ? "th" : "";
 }
 
-function addCaption(text, sourceLang = "") {
+function addCaption(text, sourceLang = "", originalText = "") {
   const clean = text.trim();
   if (!clean) return;
+  const original = originalText.trim();
   window.clearTimeout(state.repeatTimer);
-  const lang = inferSourceLanguage(clean, sourceLang);
+  const lang = inferSourceLanguage(original || clean, sourceLang);
   state.lastCaption = clean;
-  state.history.push({ text: clean, lang, time: Date.now() });
+  state.history.push({ text: original && original !== clean ? `${original} / ${clean}` : clean, lang, time: Date.now() });
   state.history = state.history.filter((item) => Date.now() - item.time <= 2 * 60 * 60 * 1000).slice(-240);
-  setCaption(clean, lang);
+  setCaption(clean, lang, false, original);
   pulseCaption();
 }
 
@@ -280,7 +295,7 @@ async function sendAudioChunk(blob) {
 
   if (!response.ok) throw new Error("Relay transcription failed");
   const data = await response.json();
-  if (data.text) addCaption(data.text, data.language || data.detected_language || data.source_language || "");
+  if (data.text) addCaption(data.text, data.language || data.detected_language || data.source_language || "", data.original_text || "");
 }
 
 async function startRelayListening() {

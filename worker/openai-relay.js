@@ -21,23 +21,53 @@ export default {
       return withCors(Response.json({ error: "Missing audio file" }, { status: 400 }));
     }
 
-    const body = new FormData();
-    body.append("file", audio, "speech.webm");
-    body.append("model", "whisper-1");
-    body.append("response_format", "verbose_json");
+    const translationBody = new FormData();
+    translationBody.append("file", audio, "speech.webm");
+    translationBody.append("model", "whisper-1");
+    translationBody.append("response_format", "verbose_json");
 
-    const openai = await fetch("https://api.openai.com/v1/audio/translations", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`
-      },
-      body
+    const transcriptionBody = new FormData();
+    transcriptionBody.append("file", audio, "speech.webm");
+    transcriptionBody.append("model", "whisper-1");
+    transcriptionBody.append("response_format", "verbose_json");
+
+    const [translation, transcription] = await Promise.all([
+      fetch("https://api.openai.com/v1/audio/translations", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`
+        },
+        body: translationBody
+      }),
+      fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`
+        },
+        body: transcriptionBody
+      })
+    ]);
+
+    const translationPayload = await translation.text();
+    if (!translation.ok) {
+      return withCors(new Response(translationPayload, {
+        status: translation.status,
+        headers: { "content-type": translation.headers.get("content-type") || "application/json" }
+      }));
+    }
+
+    const transcriptionPayload = await transcription.text();
+    const translated = JSON.parse(translationPayload);
+    const original = transcription.ok ? JSON.parse(transcriptionPayload) : {};
+    const payload = JSON.stringify({
+      ...translated,
+      language: original.language || translated.language,
+      original_text: original.text || ""
     });
 
-    const payload = await openai.text();
     return withCors(new Response(payload, {
-      status: openai.status,
-      headers: { "content-type": openai.headers.get("content-type") || "application/json" }
+      status: translation.status,
+      headers: { "content-type": translation.headers.get("content-type") || "application/json" }
     }));
   }
 };

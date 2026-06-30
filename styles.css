@@ -173,6 +173,8 @@ button {
   text-align: center;
   word-break: break-word;
   overflow-wrap: anywhere;
+  flex-direction: column;
+  gap: 0.22em;
 }
 
 .transcript.placeholder {
@@ -185,6 +187,15 @@ button {
 
 .transcript.lang-en {
   color: var(--english);
+}
+
+.caption-original {
+  color: var(--thai);
+}
+
+.caption-translation {
+  color: var(--text);
+  font-size: 0.72em;
 }
 
 .quick-actions {
