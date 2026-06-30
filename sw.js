@@ -1,4 +1,4 @@
-const CACHE_NAME = "listen-large-v5";
+const CACHE_NAME = "listen-large-v6";
 const APP_SHELL = [
   "./",
   "index.html",
