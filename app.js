@@ -1,6 +1,6 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.2";
+const APP_VERSION = "v1.1.3";
 const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
 const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
@@ -80,6 +80,15 @@ function pulseCaption() {
 function updateListeningUi() {
   els.listenButton.classList.toggle("listening", state.listening);
   els.listenLabel.textContent = state.listening ? "Stop" : "Start";
+}
+
+function mobileNeedsRelay() {
+  return !SpeechRecognition && state.engine !== "relay";
+}
+
+function showMobileRelayPrompt() {
+  setStatus("Use relay mode", "error");
+  setCaption("Tap title 5 times, choose relay mode", "", true);
 }
 
 function browserRecognitionLanguage() {
@@ -176,6 +185,7 @@ async function startBrowserListening() {
   state.recognition = createBrowserRecognizer();
   if (!state.recognition) {
     setStatus("Use relay mode", "error");
+    setCaption("Open settings and choose relay mode", "", true);
     return false;
   }
   try {
@@ -188,7 +198,8 @@ async function startBrowserListening() {
     state.recognition.start();
     return true;
   } catch {
-    setStatus("Could not start", "error");
+    setStatus("Tap Start", "error");
+    setCaption("Tap Start to allow the microphone", "", true);
     return false;
   }
 }
@@ -274,6 +285,7 @@ async function sendAudioChunk(blob) {
 async function startRelayListening() {
   if (!state.relayUrl) {
     setStatus("Add relay URL", "error");
+    setCaption("Add relay URL in settings", "", true);
     return false;
   }
 
@@ -308,7 +320,8 @@ async function startRelayListening() {
     startRelaySegment();
     return true;
   } catch {
-    setStatus("Microphone blocked", "error");
+    setStatus("Tap Start", "error");
+    setCaption("Tap Start to allow the microphone", "", true);
     return false;
   }
 }
@@ -325,6 +338,11 @@ function startRelaySegment() {
 
 async function startListening() {
   if (state.listening) return;
+  if (mobileNeedsRelay()) {
+    showMobileRelayPrompt();
+    updateListeningUi();
+    return;
+  }
   state.listening = true;
   updateListeningUi();
   setCaption("Listening...", "", true);
@@ -445,7 +463,10 @@ els.themeSelect.value = state.theme;
 els.buildBadge.textContent = BUILD_MODEL;
 setSize(state.size);
 setTheme(state.theme);
-setStatus("Starting...");
-setCaption("Listening...", "", true);
+if (mobileNeedsRelay()) showMobileRelayPrompt();
+else {
+  setStatus("Starting...");
+  setCaption("Listening...", "", true);
+}
 updateListeningUi();
 window.setTimeout(startListening, 300);
