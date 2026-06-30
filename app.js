@@ -1,6 +1,7 @@
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const BUILD_MODEL = "GPT-5 Codex / ddfc609";
+const APP_VERSION = "v1.1.0";
+const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex / c07fa6d`;
 const CAPTION_HOLD_MS = 1800;
 const REPEAT_HOLD_MS = 5000;
 const SILENCE_THRESHOLD = 0.012;
