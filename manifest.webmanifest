@@ -1,0 +1,17 @@
+{
+  "name": "Listen Large",
+  "short_name": "Listen Large",
+  "description": "Large text English and Thai speech transcription for iPhone and iPad.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
