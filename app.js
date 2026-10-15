@@ -2,7 +2,7 @@
 // No API keys, no relay, no charges: uses the browser's built-in speech recognition only.
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const APP_VERSION = "v1.2.1";
+const APP_VERSION = "v1.3.0";
 const REPEAT_HOLD_MS = 5000;
 const HISTORY_KEY = "listen-large-history";
 const HISTORY_MAX_AGE_MS = 2 * 60 * 60 * 1000; // keep 2 hours
@@ -11,6 +11,10 @@ const MANUAL_LOCK_MS = 20000; // after a manual tap, auto-switch waits this long
 const LOW_CONFIDENCE = 0.35; // below this (when the browser reports one) a result looks garbled
 const LOW_CONFIDENCE_STREAK = 2; // this many garbled results in a row → try the other language
 const RESTART_DELAY_MS = 300;
+// Free Thai→English translation via MyMemory (no key, browser-friendly). 5,000 chars/day per
+// network, or 50,000/day when an email is added in caregiver settings. Text only — never audio.
+const TRANSLATE_URL = "https://api.mymemory.translated.net/get";
+const TRANSLATE_CHUNK = 150; // MyMemory caps a query at ~500 bytes; Thai is 3 bytes per character
 // English mode can't hear Thai (it turns Thai into a stray English word), so from English
 // we head back to Thai — the "home" mode, which hears both — on either of these signals:
 const THIN_MAX_WORDS = 2; // a final result this short in English mode looks like misheard Thai
@@ -44,6 +48,9 @@ const state = {
   listening: false,
   lang: LANGS[store.get("listen-large-lang", "")] ? store.get("listen-large-lang", "") : "th-TH",
   autoSwitch: store.get("listen-large-auto", "1") === "1",
+  translate: store.get("listen-large-translate", "1") === "1",
+  translateEmail: store.get("listen-large-translate-email", ""),
+  translations: new Map(),
   size: store.get("listen-large-size", "huge"),
   theme: store.get("listen-large-theme", "white"),
   settingsUnlocked: store.get("listen-large-settings-unlocked", "0") === "1",
@@ -79,6 +86,8 @@ const els = {
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
   autoSelect: document.querySelector("#autoSelect"),
+  translateSelect: document.querySelector("#translateSelect"),
+  translateEmail: document.querySelector("#translateEmail"),
   sizeSelect: document.querySelector("#sizeSelect"),
   themeSelect: document.querySelector("#themeSelect"),
   saveSettings: document.querySelector("#saveSettings"),
@@ -116,9 +125,22 @@ function setStatus(text, tone = "active") {
   els.statusStrip.classList.toggle("error", tone === "error");
 }
 
-function setCaption(text, sourceLang = "", placeholder = false) {
+function setCaption(text, sourceLang = "", placeholder = false, translation = "") {
   state.currentLang = sourceLang;
-  els.transcript.textContent = text;
+  els.transcript.replaceChildren();
+  if (translation && !placeholder) {
+    const original = document.createElement("span");
+    original.className = "caption-original";
+    original.lang = sourceLang || "";
+    original.textContent = text;
+    const english = document.createElement("span");
+    english.className = "caption-translation";
+    english.lang = "en";
+    english.textContent = translation;
+    els.transcript.append(original, english);
+  } else {
+    els.transcript.textContent = text;
+  }
   els.transcript.classList.toggle("placeholder", placeholder);
   els.transcript.classList.toggle("lang-th", !placeholder && sourceLang === "th");
   els.transcript.classList.toggle("lang-en", !placeholder && sourceLang === "en");
@@ -256,13 +278,80 @@ function addCaption(text, confidence = 0) {
   const lang = languageOfText(clean, state.lang);
   state.lastCaption = clean;
   state.lastCaptionTime = Date.now();
-  state.history.push({ text: clean, lang, time: Date.now() });
+  const item = { text: clean, lang, time: Date.now() };
+  state.history.push(item);
   saveHistory();
   setCaption(clean, lang);
   pulseCaption();
+  if (lang === "th") translateItem(item);
 
   if (state.autoSwitch && Date.now() > state.manualLockUntil) {
     switchLanguage(nextLang(clean, confidence, state.lang));
+  }
+}
+
+/* ---------- Translation (Thai → English) ---------- */
+
+function chunkText(text) {
+  const chunks = [];
+  let current = "";
+  for (const word of text.split(/(\s+)/)) {
+    if ((current + word).length > TRANSLATE_CHUNK && current.trim()) {
+      chunks.push(current.trim());
+      current = "";
+    }
+    // Thai is often written without spaces, so hard-split any over-long run.
+    let piece = word;
+    while (piece.length > TRANSLATE_CHUNK) {
+      chunks.push(piece.slice(0, TRANSLATE_CHUNK));
+      piece = piece.slice(TRANSLATE_CHUNK);
+    }
+    current += piece;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+async function translateChunk(text) {
+  const params = new URLSearchParams({ q: text, langpair: "th|en" });
+  if (state.translateEmail) params.set("de", state.translateEmail);
+  const response = await fetch(`${TRANSLATE_URL}?${params}`);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  // MyMemory reports quota/errors in the body, sometimes with HTTP 200.
+  if (Number(data.responseStatus) === 429 || data.quotaFinished) throw new Error("quota");
+  if (Number(data.responseStatus) !== 200) throw new Error(String(data.responseDetails || data.responseStatus));
+  const out = String(data.responseData?.translatedText || "").trim();
+  if (!out || /MYMEMORY WARNING/i.test(out)) throw new Error("quota");
+  return out;
+}
+
+async function translateText(text) {
+  if (state.translations.has(text)) return state.translations.get(text);
+  const parts = [];
+  for (const chunk of chunkText(text)) parts.push(await translateChunk(chunk));
+  const english = parts.join(" ");
+  state.translations.set(text, english);
+  return english;
+}
+
+async function translateItem(item) {
+  if (!state.translate || item.translation) return;
+  try {
+    item.translation = await translateText(item.text);
+    saveHistory();
+    if (els.statusText.textContent === "Translation limit reached today" && state.listening) {
+      setStatus(LANGS[state.lang].listening);
+    }
+    // Only redraw if this sentence is still the one on screen.
+    if (state.lastCaption === item.text && els.transcript.textContent.startsWith(item.text)) {
+      setCaption(item.text, item.lang, false, item.translation);
+    }
+  } catch (error) {
+    if (String(error.message).includes("quota") || /LIMIT|QUOTA/i.test(error.message)) {
+      setStatus("Translation limit reached today", "error");
+    }
+    // Otherwise stay quiet: the Thai caption is already showing.
   }
 }
 
@@ -447,6 +536,10 @@ async function stopListening({ keepMessage = false } = {}) {
 function saveSettings() {
   state.autoSwitch = els.autoSelect.value === "1";
   store.set("listen-large-auto", state.autoSwitch ? "1" : "0");
+  state.translate = els.translateSelect.value === "1";
+  store.set("listen-large-translate", state.translate ? "1" : "0");
+  state.translateEmail = els.translateEmail.value.trim();
+  store.set("listen-large-translate-email", state.translateEmail);
   setSize(els.sizeSelect.value);
   setTheme(els.themeSelect.value);
 }
@@ -467,6 +560,13 @@ function renderHistory() {
     time.className = "history-time";
     time.textContent = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }).format(item.time);
     row.append(time, item.text);
+    if (item.translation) {
+      const english = document.createElement("span");
+      english.className = "history-translation";
+      english.lang = "en";
+      english.textContent = item.translation;
+      row.append(english);
+    }
     els.historyList.append(row);
   }
 }
@@ -476,10 +576,13 @@ function showRepeat() {
   const recent = state.history.filter((item) => item.time >= cutoff);
   if (!recent.length) return;
   const text = recent.map((item) => item.text).join(" ");
-  setCaption(text, recent[recent.length - 1].lang);
+  const english = recent.map((item) => item.translation || (item.lang === "en" ? item.text : "")).filter(Boolean).join(" ");
+  const hasThai = recent.some((item) => item.lang === "th");
+  setCaption(text, recent[recent.length - 1].lang, false, hasThai ? english : "");
   window.clearTimeout(state.repeatTimer);
   state.repeatTimer = window.setTimeout(() => {
-    if (state.lastCaption) setCaption(state.lastCaption, languageOfText(state.lastCaption, state.lang));
+    const last = state.history[state.history.length - 1];
+    if (last) setCaption(last.text, last.lang, false, last.translation || "");
     else setCaption(LANGS[state.lang].listening, "", true);
   }, REPEAT_HOLD_MS);
 }
@@ -534,6 +637,8 @@ if (new URLSearchParams(location.search).get("settings") === "1") unlockSettings
 else if (state.settingsUnlocked) unlockSettings(false);
 
 els.autoSelect.value = state.autoSwitch ? "1" : "0";
+els.translateSelect.value = state.translate ? "1" : "0";
+els.translateEmail.value = state.translateEmail;
 els.sizeSelect.value = state.size;
 els.themeSelect.value = state.theme;
 els.buildBadge.textContent = APP_VERSION;

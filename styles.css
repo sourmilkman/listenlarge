@@ -424,3 +424,21 @@ button {
 .history-list li.lang-en {
   color: var(--english);
 }
+
+/* v1.3.0 — English translation under Thai */
+.caption-original {
+  color: var(--thai);
+}
+
+.caption-translation {
+  color: var(--text);
+  font-size: 0.62em;
+  line-height: 1.15;
+}
+
+.history-translation {
+  display: block;
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 1rem;
+}

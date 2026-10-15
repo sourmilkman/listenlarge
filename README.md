@@ -8,6 +8,7 @@ No API keys, no server, no charges. It uses the browser's built-in speech recogn
 
 - Tap **Start**. Captions appear as people speak: **Thai in yellow, English in blue**.
 - **Auto-switch** (on by default): Thai is the home mode because it hears both languages (English comes out in English letters). When a full English sentence is heard, the app switches to English mode for better English accuracy. English mode can't hear Thai, so it goes back to Thai after two very short results in a row (how misheard Thai shows up) or 10 seconds of quiet. The first sentence after a switch may be missed or garbled.
+- **English translation under Thai** (on by default): Thai captions show an English translation underneath, a moment after the Thai appears. It's free via MyMemory (5,000 characters a day, or 50,000 if you add an email in caregiver settings). Only the Thai text is sent, never audio. If the daily limit is reached, Thai still shows on its own.
 - The **ไทย / EN** button on the status bar switches language by hand. After a manual tap, auto-switch pauses for 20 seconds so it doesn't flip straight back.
 - **Repeat** shows the last 30 seconds again. **History** keeps the last 2 hours on the device.
 - The screen stays awake while listening.
@@ -22,7 +23,7 @@ If captions never appear from the Home Screen icon, try it in a normal Safari ta
 
 ## Caregiver settings
 
-Hidden from the daily screen. Open with `?settings=1` on the URL, or tap the **Listen Large** title five times. Settings: auto-switch on/off, text size, white/yellow theme.
+Hidden from the daily screen. Open with `?settings=1` on the URL, or tap the **Listen Large** title five times. Settings: auto-switch on/off, English translation on/off, optional email for a higher free translation limit, text size, white/yellow theme.
 
 ## Speech test page
 
@@ -34,7 +35,7 @@ Repository **Settings › Pages ›** Deploy from a branch › `main` / root. Op
 
 ## Privacy
 
-Apple (Safari) or Google (Chrome) may process the audio on their servers to recognise speech. Nothing is sent anywhere by this app itself.
+Apple (Safari) or Google (Chrome) may process the audio on their servers to recognise speech. For translation, the app sends recognised **Thai text** (never audio) to MyMemory (mymemory.translated.net).
 
 ## Local preview
 
