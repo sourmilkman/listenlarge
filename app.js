@@ -2,7 +2,7 @@
 // No API keys, no relay, no charges: uses the browser's built-in speech recognition only.
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const APP_VERSION = "v1.2.0";
+const APP_VERSION = "v1.2.1";
 const REPEAT_HOLD_MS = 5000;
 const HISTORY_KEY = "listen-large-history";
 const HISTORY_MAX_AGE_MS = 2 * 60 * 60 * 1000; // keep 2 hours
@@ -11,6 +11,11 @@ const MANUAL_LOCK_MS = 20000; // after a manual tap, auto-switch waits this long
 const LOW_CONFIDENCE = 0.35; // below this (when the browser reports one) a result looks garbled
 const LOW_CONFIDENCE_STREAK = 2; // this many garbled results in a row → try the other language
 const RESTART_DELAY_MS = 300;
+// English mode can't hear Thai (it turns Thai into a stray English word), so from English
+// we head back to Thai — the "home" mode, which hears both — on either of these signals:
+const THIN_MAX_WORDS = 2; // a final result this short in English mode looks like misheard Thai
+const THIN_STREAK = 2; // this many short results in a row → back to Thai
+const PAUSE_RETURN_MS = 10000; // this long without hearing anything in English mode → back to Thai
 
 const LANGS = {
   "th-TH": { code: "th", label: "ไทย", listening: "กำลังฟัง..." },
@@ -53,6 +58,10 @@ const state = {
   wakeLock: null,
   manualLockUntil: 0,
   lowConfidenceStreak: 0,
+  thinStreak: 0,
+  lastHeardAt: 0,
+  pauseTimer: null,
+  langSource: "auto", // "manual" when chosen with the ไทย / EN button
   fatalError: false,
   titleTaps: []
 };
@@ -192,7 +201,14 @@ function nextLang(text, confidence, current) {
   if (current === "th-TH" && latin >= 6 && latin > thai * 2) return "en-US";
   if (current === "en-US" && thai > 0) return "th-TH";
 
-  // 2. Garble signal: a run of low-confidence results suggests the wrong language.
+  // 2. Thin signal (English mode only): Thai speech comes out as one or two stray English words.
+  if (current === "en-US") {
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    state.thinStreak = words <= THIN_MAX_WORDS ? state.thinStreak + 1 : 0;
+    if (state.thinStreak >= THIN_STREAK) return "th-TH";
+  }
+
+  // 3. Garble signal: a run of low-confidence results suggests the wrong language.
   //    Only used when the browser reports a real confidence (Safari sometimes reports 0).
   if (confidence > 0 && confidence < LOW_CONFIDENCE) state.lowConfidenceStreak += 1;
   else state.lowConfidenceStreak = 0;
@@ -204,10 +220,20 @@ function nextLang(text, confidence, current) {
   return current;
 }
 
+// Pause signal: after a quiet spell in auto-chosen English, go home to Thai so the next
+// speaker is heard whichever language they use. A manual EN choice is left alone.
+function checkPauseReturn() {
+  if (!state.listening || !state.autoSwitch || state.lang !== "en-US" || state.langSource !== "auto") return;
+  if (Date.now() - state.lastHeardAt >= PAUSE_RETURN_MS) switchLanguage("th-TH");
+}
+
 function switchLanguage(lang, { manual = false } = {}) {
   if (!LANGS[lang] || lang === state.lang) return;
   state.lang = lang;
   state.lowConfidenceStreak = 0;
+  state.thinStreak = 0;
+  state.lastHeardAt = Date.now();
+  state.langSource = manual ? "manual" : "auto";
   if (manual) state.manualLockUntil = Date.now() + MANUAL_LOCK_MS;
   store.set("listen-large-lang", lang);
   updateLangUi();
@@ -289,6 +315,7 @@ function createRecognizer() {
 
   recognition.onresult = (event) => {
     bumpMeter();
+    state.lastHeardAt = Date.now();
     let finalText = "";
     let finalConfidence = 0;
     let interimText = "";
@@ -380,6 +407,10 @@ async function startListening() {
   state.listening = true;
   state.fatalError = false;
   state.lowConfidenceStreak = 0;
+  state.thinStreak = 0;
+  state.lastHeardAt = Date.now();
+  window.clearInterval(state.pauseTimer);
+  state.pauseTimer = window.setInterval(checkPauseReturn, 1000);
   updateListeningUi();
   setCaption(LANGS[state.lang].listening, "", true);
   setStatus(LANGS[state.lang].listening);
@@ -393,6 +424,7 @@ async function stopListening({ keepMessage = false } = {}) {
   updateListeningUi();
   window.clearTimeout(state.restartTimer);
   window.clearTimeout(state.repeatTimer);
+  window.clearInterval(state.pauseTimer);
   const recognition = state.recognition;
   state.recognition = null;
   if (recognition) {

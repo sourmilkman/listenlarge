@@ -7,7 +7,7 @@ No API keys, no server, no charges. It uses the browser's built-in speech recogn
 ## How it works
 
 - Tap **Start**. Captions appear as people speak: **Thai in yellow, English in blue**.
-- **Auto-switch** (on by default): the app listens in one language at a time. When the speech it hears looks like the other language, it switches over. The first sentence after a switch may be missed or garbled.
+- **Auto-switch** (on by default): Thai is the home mode because it hears both languages (English comes out in English letters). When a full English sentence is heard, the app switches to English mode for better English accuracy. English mode can't hear Thai, so it goes back to Thai after two very short results in a row (how misheard Thai shows up) or 10 seconds of quiet. The first sentence after a switch may be missed or garbled.
 - The **ไทย / EN** button on the status bar switches language by hand. After a manual tap, auto-switch pauses for 20 seconds so it doesn't flip straight back.
 - **Repeat** shows the last 30 seconds again. **History** keeps the last 2 hours on the device.
 - The screen stays awake while listening.

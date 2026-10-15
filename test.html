@@ -17,7 +17,7 @@
     </style>
   </head>
   <body>
-    <h1>Speech test <small style="color:#aaa">v1.2.0</small></h1>
+    <h1>Speech test <small style="color:#aaa">v1.2.1</small></h1>
     <p>Pick a language, then speak. Try English while in Thai mode, and Thai while in English mode. Screenshot the results and send them back.</p>
     <div class="row">
       <button class="th" data-lang="th-TH">Listen in Thai</button>
@@ -59,7 +59,7 @@
             li.textContent = alt.transcript;
             const meta = document.createElement("span");
             meta.className = "meta";
-            meta.textContent = `mode ${lang} · confidence ${(alt.confidence || 0).toFixed(2)} · Thai chars ${c.thai} · Latin chars ${c.latin}`;
+            meta.textContent = `mode ${lang} · words ${alt.transcript.trim().split(/\s+/).filter(Boolean).length} · confidence ${(alt.confidence || 0).toFixed(2)} · Thai chars ${c.thai} · Latin chars ${c.latin}`;
             li.append(meta);
             log.prepend(li);
           }
