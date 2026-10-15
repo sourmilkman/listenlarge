@@ -2,7 +2,7 @@
 // No API keys, no relay, no charges: uses the browser's built-in speech recognition only.
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const APP_VERSION = "v1.3.0";
+const APP_VERSION = "v1.3.1";
 const REPEAT_HOLD_MS = 5000;
 const HISTORY_KEY = "listen-large-history";
 const HISTORY_MAX_AGE_MS = 2 * 60 * 60 * 1000; // keep 2 hours
@@ -628,7 +628,26 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pagehide", () => stopListening());
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  // When a new version's service worker takes over, reload once so the new code shows —
+  // but never mid-listen (it would cut dad off); wait until listening is stopped.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let pendingReload = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) return;
+    if (state.listening) pendingReload = true;
+    else location.reload();
+  });
+  els.listenButton.addEventListener("click", () => {
+    if (pendingReload && !state.listening) location.reload();
+  });
+  navigator.serviceWorker
+    .register("sw.js", { updateViaCache: "none" })
+    .then((registration) => {
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") registration.update().catch(() => {});
+      });
+    })
+    .catch(() => {});
 }
 
 /* ---------- Boot ---------- */
