@@ -1,40 +1,66 @@
+// Listen Large — free, on-device-browser captions with Thai/English auto-switch.
+// No API keys, no relay, no charges: uses the browser's built-in speech recognition only.
+
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-const APP_VERSION = "v1.1.9";
-const BUILD_MODEL = `${APP_VERSION} / GPT-5 Codex`;
+const APP_VERSION = "v1.2.0";
 const REPEAT_HOLD_MS = 5000;
-const SILENCE_THRESHOLD = 0.012;
+const HISTORY_KEY = "listen-large-history";
+const HISTORY_MAX_AGE_MS = 2 * 60 * 60 * 1000; // keep 2 hours
+const HISTORY_MAX_ITEMS = 240;
+const MANUAL_LOCK_MS = 20000; // after a manual tap, auto-switch waits this long
+const LOW_CONFIDENCE = 0.35; // below this (when the browser reports one) a result looks garbled
+const LOW_CONFIDENCE_STREAK = 2; // this many garbled results in a row → try the other language
+const RESTART_DELAY_MS = 300;
+
+const LANGS = {
+  "th-TH": { code: "th", label: "ไทย", listening: "กำลังฟัง..." },
+  "en-US": { code: "en", label: "EN", listening: "Listening..." }
+};
+
+const store = {
+  get(key, fallback) {
+    try {
+      const value = localStorage.getItem(key);
+      return value === null ? fallback : value;
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* storage unavailable — settings just won't persist */
+    }
+  }
+};
 
 const state = {
   listening: false,
-  language: localStorage.getItem("listen-large-language") || "auto",
-  size: localStorage.getItem("listen-large-size") || "huge",
-  theme: localStorage.getItem("listen-large-theme") || "white",
-  engine: localStorage.getItem("listen-large-engine") || "browser",
-  relayUrl: localStorage.getItem("listen-large-relay-url") || "",
-  settingsUnlocked: localStorage.getItem("listen-large-settings-unlocked") === "1",
-  currentCaption: "",
-  currentOriginal: "",
-  lastCaption: "",
+  lang: LANGS[store.get("listen-large-lang", "")] ? store.get("listen-large-lang", "") : "th-TH",
+  autoSwitch: store.get("listen-large-auto", "1") === "1",
+  size: store.get("listen-large-size", "huge"),
+  theme: store.get("listen-large-theme", "white"),
+  settingsUnlocked: store.get("listen-large-settings-unlocked", "0") === "1",
   currentLang: "",
-  history: [],
+  lastCaption: "",
+  lastCaptionTime: 0,
+  history: loadHistory(),
   recognition: null,
-  mediaRecorder: null,
-  stream: null,
-  chunkTimer: null,
-  wakeLock: null,
-  audioContext: null,
-  analyser: null,
-  meterFrame: null,
-  meterLevel: 0,
-  segmentPeak: 0,
+  restartTimer: null,
   repeatTimer: null,
+  meterTimer: null,
+  wakeLock: null,
+  manualLockUntil: 0,
+  lowConfidenceStreak: 0,
+  fatalError: false,
   titleTaps: []
 };
 
 const els = {
   listenButton: document.querySelector("#listenButton"),
   listenLabel: document.querySelector("#listenLabel"),
+  langButton: document.querySelector("#langButton"),
   statusStrip: document.querySelector("#statusStrip"),
   statusText: document.querySelector("#statusText"),
   transcript: document.querySelector("#transcript"),
@@ -43,9 +69,7 @@ const els = {
   brandButton: document.querySelector("#brandButton"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
-  engineSelect: document.querySelector("#engineSelect"),
-  relayUrl: document.querySelector("#relayUrl"),
-  languageSelect: document.querySelector("#languageSelect"),
+  autoSelect: document.querySelector("#autoSelect"),
   sizeSelect: document.querySelector("#sizeSelect"),
   themeSelect: document.querySelector("#themeSelect"),
   saveSettings: document.querySelector("#saveSettings"),
@@ -56,32 +80,40 @@ const els = {
   clearHistoryButton: document.querySelector("#clearHistoryButton")
 };
 
+/* ---------- History ---------- */
+
+function loadHistory() {
+  try {
+    const items = JSON.parse(store.get(HISTORY_KEY, "[]"));
+    if (!Array.isArray(items)) return [];
+    return items.filter((item) => item && typeof item.text === "string" && Date.now() - item.time <= HISTORY_MAX_AGE_MS);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory() {
+  state.history = state.history
+    .filter((item) => Date.now() - item.time <= HISTORY_MAX_AGE_MS)
+    .slice(-HISTORY_MAX_ITEMS);
+  store.set(HISTORY_KEY, JSON.stringify(state.history));
+}
+
+/* ---------- UI helpers ---------- */
+
 function setStatus(text, tone = "active") {
   els.statusText.textContent = text;
   els.statusStrip.classList.toggle("idle", tone === "idle");
   els.statusStrip.classList.toggle("error", tone === "error");
 }
 
-function setCaption(text, sourceLang = "", placeholder = false, originalText = "") {
-  state.currentCaption = text;
-  state.currentOriginal = originalText;
+function setCaption(text, sourceLang = "", placeholder = false) {
   state.currentLang = sourceLang;
-  els.transcript.replaceChildren();
-  const displayText = text || (state.listening ? "Listening..." : "Stopped");
-  if (originalText && originalText !== text) {
-    const original = document.createElement("span");
-    original.className = "caption-original";
-    original.textContent = originalText;
-    const translation = document.createElement("span");
-    translation.className = "caption-translation";
-    translation.textContent = text;
-    els.transcript.append(original, translation);
-  } else {
-    els.transcript.textContent = displayText;
-  }
-  els.transcript.classList.toggle("placeholder", placeholder || !text);
-  els.transcript.classList.toggle("lang-th", sourceLang === "th");
-  els.transcript.classList.toggle("lang-en", sourceLang === "en");
+  els.transcript.textContent = text;
+  els.transcript.classList.toggle("placeholder", placeholder);
+  els.transcript.classList.toggle("lang-th", !placeholder && sourceLang === "th");
+  els.transcript.classList.toggle("lang-en", !placeholder && sourceLang === "en");
+  els.transcript.lang = sourceLang || "";
 }
 
 function pulseCaption() {
@@ -95,28 +127,26 @@ function updateListeningUi() {
   els.listenLabel.textContent = state.listening ? "Stop" : "Start";
 }
 
-function mobileNeedsRelay() {
-  return !SpeechRecognition && effectiveEngine() !== "relay";
+function updateLangUi() {
+  const info = LANGS[state.lang];
+  els.langButton.textContent = info.label;
+  els.langButton.dataset.lang = info.code;
+  els.langButton.setAttribute("aria-label", `Language: ${info.code === "th" ? "Thai" : "English"}. Tap to switch.`);
 }
 
-function showMobileRelayPrompt() {
-  setStatus("Use relay mode", "error");
-  setCaption("Tap title 5 times, choose relay mode", "", true);
-}
-
-function effectiveEngine() {
-  if (state.language === "auto" && state.relayUrl) return "relay";
-  return state.engine;
-}
-
-function browserRecognitionLanguage() {
-  if (state.language === "auto") return navigator.language?.startsWith("th") ? "th-TH" : "en-US";
-  return state.language;
+// No audio capture of our own (iOS can block speech recognition if another mic stream is open),
+// so the meter just bounces whenever the recogniser hears speech.
+function bumpMeter(level = 0.7) {
+  document.documentElement.style.setProperty("--meter", String(level));
+  window.clearTimeout(state.meterTimer);
+  state.meterTimer = window.setTimeout(() => {
+    document.documentElement.style.setProperty("--meter", "0");
+  }, 350);
 }
 
 function setSize(size) {
   state.size = size;
-  localStorage.setItem("listen-large-size", size);
+  store.set("listen-large-size", size);
   const map = {
     large: "clamp(2.55rem, 7.2vw, 4.8rem)",
     huge: "clamp(3.05rem, 8.4vw, 5.6rem)",
@@ -127,138 +157,194 @@ function setSize(size) {
 
 function setTheme(theme) {
   state.theme = theme;
-  localStorage.setItem("listen-large-theme", theme);
+  store.set("listen-large-theme", theme);
   document.documentElement.dataset.theme = theme;
 }
 
 function unlockSettings(open = false) {
   state.settingsUnlocked = true;
-  localStorage.setItem("listen-large-settings-unlocked", "1");
+  store.set("listen-large-settings-unlocked", "1");
   els.settingsButton.hidden = false;
   if (open) els.settingsDialog.showModal();
 }
 
-function inferSourceLanguage(text, language) {
-  if (language) {
-    const normalized = String(language).toLowerCase();
-    if (normalized === "th" || normalized.startsWith("th-") || normalized.includes("thai")) return "th";
-    if (normalized === "en" || normalized.startsWith("en-") || normalized.includes("english")) return "en";
-  }
-  return /[\u0E00-\u0E7F]/.test(text) ? "th" : "";
+/* ---------- Language detection ---------- */
+
+function scriptCounts(text) {
+  return {
+    thai: (text.match(/[฀-๿]/g) || []).length,
+    latin: (text.match(/[A-Za-z]/g) || []).length
+  };
 }
 
-function addCaption(text, sourceLang = "", originalText = "") {
+function languageOfText(text, fallback) {
+  const { thai, latin } = scriptCounts(text);
+  if (thai > latin) return "th";
+  if (latin > thai) return "en";
+  return LANGS[fallback]?.code || "";
+}
+
+// Decide which language to listen in next, based on the sentence just heard.
+function nextLang(text, confidence, current) {
+  const { thai, latin } = scriptCounts(text);
+
+  // 1. Clear script signal: Thai dictation writes English words in English letters.
+  if (current === "th-TH" && latin >= 6 && latin > thai * 2) return "en-US";
+  if (current === "en-US" && thai > 0) return "th-TH";
+
+  // 2. Garble signal: a run of low-confidence results suggests the wrong language.
+  //    Only used when the browser reports a real confidence (Safari sometimes reports 0).
+  if (confidence > 0 && confidence < LOW_CONFIDENCE) state.lowConfidenceStreak += 1;
+  else state.lowConfidenceStreak = 0;
+
+  if (state.lowConfidenceStreak >= LOW_CONFIDENCE_STREAK) {
+    state.lowConfidenceStreak = 0;
+    return current === "th-TH" ? "en-US" : "th-TH";
+  }
+  return current;
+}
+
+function switchLanguage(lang, { manual = false } = {}) {
+  if (!LANGS[lang] || lang === state.lang) return;
+  state.lang = lang;
+  state.lowConfidenceStreak = 0;
+  if (manual) state.manualLockUntil = Date.now() + MANUAL_LOCK_MS;
+  store.set("listen-large-lang", lang);
+  updateLangUi();
+  if (state.listening) {
+    setStatus(LANGS[lang].listening);
+    restartRecognition();
+  }
+}
+
+/* ---------- Captions ---------- */
+
+function addCaption(text, confidence = 0) {
   const clean = text.trim();
   if (!clean) return;
-  const original = originalText.trim();
+
+  // Safari occasionally fires the same final result twice.
+  if (clean === state.lastCaption && Date.now() - state.lastCaptionTime < 3000) return;
+
   window.clearTimeout(state.repeatTimer);
-  const lang = inferSourceLanguage(original || clean, sourceLang);
+  const lang = languageOfText(clean, state.lang);
   state.lastCaption = clean;
-  state.history.push({ text: original && original !== clean ? `${original} / ${clean}` : clean, lang, time: Date.now() });
-  state.history = state.history.filter((item) => Date.now() - item.time <= 2 * 60 * 60 * 1000).slice(-240);
-  setCaption(clean, lang, false, original);
+  state.lastCaptionTime = Date.now();
+  state.history.push({ text: clean, lang, time: Date.now() });
+  saveHistory();
+  setCaption(clean, lang);
   pulseCaption();
+
+  if (state.autoSwitch && Date.now() > state.manualLockUntil) {
+    switchLanguage(nextLang(clean, confidence, state.lang));
+  }
 }
 
-function createBrowserRecognizer() {
-  if (!SpeechRecognition) return null;
+/* ---------- Speech recognition ---------- */
+
+function errorMessage(code) {
+  switch (code) {
+    case "not-allowed":
+      return { status: "Microphone blocked", caption: "Allow the microphone for this app in Settings", fatal: true };
+    case "service-not-allowed":
+      return { status: "Dictation is off", caption: "Turn on Dictation: Settings › General › Keyboard", fatal: true };
+    case "language-not-supported":
+      return { status: "Language not available", caption: "Turn on Dictation for Thai in Settings › General › Keyboard", fatal: true };
+    case "audio-capture":
+      return { status: "No microphone", caption: "No microphone found", fatal: true };
+    case "network":
+      return { status: "No internet", caption: "Speech needs an internet connection", fatal: false };
+    default:
+      return null; // "no-speech", "aborted" etc. — just keep listening
+  }
+}
+
+function createRecognizer() {
   const recognition = new SpeechRecognition();
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.lang = browserRecognitionLanguage();
+  recognition.maxAlternatives = 1;
+  recognition.lang = state.lang;
 
-  recognition.onstart = () => setStatus("Listening...");
+  recognition.onstart = () => setStatus(LANGS[state.lang].listening);
+  recognition.onspeechstart = () => bumpMeter(0.5);
+
   recognition.onerror = (event) => {
-    const message = event.error === "not-allowed" ? "Microphone blocked" : "Speech error";
-    setStatus(message, "error");
-  };
-  recognition.onend = () => {
-    if (state.listening && effectiveEngine() === "browser") {
-      window.setTimeout(() => {
-        try {
-          recognition.start();
-        } catch {
-          setStatus("Listening paused", "error");
-        }
-      }, 250);
+    const info = errorMessage(event.error);
+    if (!info) return;
+    setStatus(info.status, "error");
+    if (info.fatal) {
+      state.fatalError = true;
+      setCaption(info.caption, "", true);
+      stopListening({ keepMessage: true });
     }
   };
+
+  recognition.onend = () => {
+    // iOS ends sessions on its own every so often — quietly restart while listening.
+    if (state.recognition !== recognition) return;
+    state.recognition = null;
+    if (state.listening && !state.fatalError) scheduleStart();
+  };
+
   recognition.onresult = (event) => {
+    bumpMeter();
     let finalText = "";
+    let finalConfidence = 0;
     let interimText = "";
     for (let index = event.resultIndex; index < event.results.length; index += 1) {
       const result = event.results[index];
-      if (result.isFinal) finalText += result[0].transcript;
-      else interimText += result[0].transcript;
+      if (result.isFinal) {
+        finalText += result[0].transcript;
+        finalConfidence = Math.max(finalConfidence, result[0].confidence || 0);
+      } else {
+        interimText += result[0].transcript;
+      }
     }
-    if (finalText.trim()) addCaption(finalText, browserRecognitionLanguage());
-    else if (interimText.trim()) setCaption(interimText.trim(), inferSourceLanguage(interimText, browserRecognitionLanguage()));
+    if (finalText.trim()) addCaption(finalText, finalConfidence);
+    else if (interimText.trim()) setCaption(interimText.trim(), languageOfText(interimText, state.lang));
   };
+
   return recognition;
 }
 
-async function startBrowserListening() {
-  state.recognition = createBrowserRecognizer();
-  if (!state.recognition) {
-    setStatus("Use relay mode", "error");
-    setCaption("Open settings and choose relay mode", "", true);
-    return false;
-  }
+function startRecognition() {
+  if (!state.listening || state.recognition) return;
+  const recognition = createRecognizer();
+  state.recognition = recognition;
   try {
-    navigator.mediaDevices?.getUserMedia?.({ audio: true })
-      ?.then((stream) => {
-        state.stream = stream;
-        startMeter(stream);
-      })
-      .catch(() => {});
-    state.recognition.start();
-    return true;
+    recognition.start();
   } catch {
-    setStatus("Tap Start", "error");
-    setCaption("Tap Start to allow microphone", "", true);
-    return false;
+    state.recognition = null;
+    scheduleStart();
   }
 }
 
-function getMimeType() {
-  const options = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"];
-  return options.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+function scheduleStart() {
+  window.clearTimeout(state.restartTimer);
+  state.restartTimer = window.setTimeout(startRecognition, RESTART_DELAY_MS);
 }
 
-function startMeter(stream) {
-  stopMeter();
-  if (!AudioContextClass) return;
-  state.audioContext = new AudioContextClass();
-  const source = state.audioContext.createMediaStreamSource(stream);
-  state.analyser = state.audioContext.createAnalyser();
-  state.analyser.fftSize = 1024;
-  source.connect(state.analyser);
-  const data = new Uint8Array(state.analyser.fftSize);
-  const tick = () => {
-    state.analyser.getByteTimeDomainData(data);
-    let sum = 0;
-    for (const value of data) {
-      const centered = (value - 128) / 128;
-      sum += centered * centered;
-    }
-    state.meterLevel = Math.sqrt(sum / data.length);
-    state.segmentPeak = Math.max(state.segmentPeak, state.meterLevel);
-    document.documentElement.style.setProperty("--meter", String(Math.min(1, state.meterLevel * 9)));
-    state.meterFrame = requestAnimationFrame(tick);
-  };
-  tick();
+function restartRecognition() {
+  const recognition = state.recognition;
+  if (!recognition) {
+    scheduleStart();
+    return;
+  }
+  // Detach first so the old session's onend doesn't race the new one.
+  recognition.onend = null;
+  recognition.onresult = null;
+  recognition.onerror = null;
+  state.recognition = null;
+  try {
+    recognition.abort();
+  } catch {
+    /* already stopped */
+  }
+  scheduleStart();
 }
 
-function stopMeter() {
-  if (state.meterFrame) cancelAnimationFrame(state.meterFrame);
-  state.meterFrame = null;
-  state.analyser = null;
-  state.audioContext?.close().catch(() => {});
-  state.audioContext = null;
-  state.meterLevel = 0;
-  state.segmentPeak = 0;
-  document.documentElement.style.setProperty("--meter", "0");
-}
+/* ---------- Wake lock ---------- */
 
 async function requestWakeLock() {
   if (!("wakeLock" in navigator) || !state.listening) return;
@@ -278,141 +364,59 @@ async function releaseWakeLock() {
   await lock?.release().catch(() => {});
 }
 
-async function sendAudioChunk(blob) {
-  if (!blob.size || !state.relayUrl) return;
-  if (state.segmentPeak < SILENCE_THRESHOLD) {
-    setStatus("Listening...");
-    return;
-  }
+/* ---------- Start / stop ---------- */
 
-  const form = new FormData();
-  form.append("audio", blob, "speech.webm");
-
-  const response = await fetch(state.relayUrl.replace(/\/$/, "") + "/transcribe", {
-    method: "POST",
-    body: form
-  });
-
-  if (!response.ok) throw new Error("Relay transcription failed");
-  const data = await response.json();
-  if (data.text) addCaption(data.text, data.language || data.detected_language || data.source_language || "", data.original_text || "");
-}
-
-async function startRelayListening() {
-  if (!state.relayUrl) {
-    setStatus("Add relay URL", "error");
-    setCaption("Add relay URL in settings", "", true);
-    return false;
-  }
-
-  try {
-    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    startMeter(state.stream);
-    const mimeType = getMimeType();
-    state.mediaRecorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : undefined);
-    let chunks = [];
-
-    state.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size) chunks.push(event.data);
-    };
-    state.mediaRecorder.onstop = async () => {
-      const blob = new Blob(chunks, { type: state.mediaRecorder?.mimeType || "audio/webm" });
-      chunks = [];
-      if (!state.listening) {
-        setStatus("Stopped", "idle");
-        return;
-      }
-      try {
-        setStatus("Transcribing...");
-        await sendAudioChunk(blob);
-        if (state.listening) startRelaySegment();
-        else setStatus("Stopped", "idle");
-      } catch {
-        setStatus("Relay error", "error");
-        if (state.listening) startRelaySegment();
-      }
-    };
-
-    startRelaySegment();
-    return true;
-  } catch {
-    setStatus("Tap Start", "error");
-    setCaption("Tap Start to allow microphone", "", true);
-    return false;
-  }
-}
-
-function startRelaySegment() {
-  if (!state.mediaRecorder || !state.listening || state.mediaRecorder.state !== "inactive") return;
-  state.segmentPeak = 0;
-  state.mediaRecorder.start();
-  setStatus("Listening...");
-  state.chunkTimer = window.setTimeout(() => {
-    if (state.mediaRecorder?.state === "recording") state.mediaRecorder.stop();
-  }, 6500);
+function showUnsupported() {
+  setStatus("Speech not available", "error");
+  setCaption("Open this app in Safari (iPad) or Chrome", "", true);
 }
 
 async function startListening() {
   if (state.listening) return;
-  if (mobileNeedsRelay()) {
-    showMobileRelayPrompt();
-    updateListeningUi();
+  if (!SpeechRecognition) {
+    showUnsupported();
     return;
   }
   state.listening = true;
+  state.fatalError = false;
+  state.lowConfidenceStreak = 0;
   updateListeningUi();
-  setCaption("Listening...", "", true);
-  await requestWakeLock();
-  const engine = effectiveEngine();
-  if (state.language === "auto" && engine === "browser") {
-    setStatus("Relay needed for Auto", "error");
-    setCaption("Auto Thai needs relay mode", "", true);
-    state.listening = false;
-    updateListeningUi();
-    return;
-  }
-  const started = engine === "relay" ? await startRelayListening() : await startBrowserListening();
-  if (!started) {
-    state.listening = false;
-    updateListeningUi();
-  }
+  setCaption(LANGS[state.lang].listening, "", true);
+  setStatus(LANGS[state.lang].listening);
+  // Start speech synchronously inside the tap — iOS only grants the mic during a user gesture.
+  startRecognition();
+  requestWakeLock(); // fire-and-forget: never let a slow/denied wake lock block listening
 }
 
-async function stopListening() {
+async function stopListening({ keepMessage = false } = {}) {
   state.listening = false;
   updateListeningUi();
-  window.clearTimeout(state.chunkTimer);
+  window.clearTimeout(state.restartTimer);
   window.clearTimeout(state.repeatTimer);
-  if (state.recognition) {
-    state.recognition.onend = null;
-    state.recognition.stop();
-    state.recognition = null;
+  const recognition = state.recognition;
+  state.recognition = null;
+  if (recognition) {
+    recognition.onend = null;
+    try {
+      recognition.stop();
+    } catch {
+      /* already stopped */
+    }
   }
-  if (state.mediaRecorder?.state === "recording") state.mediaRecorder.stop();
-  state.mediaRecorder = null;
-  state.stream?.getTracks().forEach((track) => track.stop());
-  state.stream = null;
-  stopMeter();
+  document.documentElement.style.setProperty("--meter", "0");
   await releaseWakeLock();
+  if (keepMessage) return;
   setCaption("Stopped", "", true);
-  if (!els.statusStrip.classList.contains("error")) setStatus("Stopped", "idle");
+  setStatus("Stopped", "idle");
 }
 
+/* ---------- Settings, history, repeat ---------- */
+
 function saveSettings() {
-  const wasListening = state.listening;
-  state.engine = els.engineSelect.value;
-  state.relayUrl = els.relayUrl.value.trim();
-  state.language = els.languageSelect.value;
-  if (state.language === "auto" && state.relayUrl) state.engine = "relay";
-  localStorage.setItem("listen-large-engine", state.engine);
-  localStorage.setItem("listen-large-relay-url", state.relayUrl);
-  localStorage.setItem("listen-large-language", state.language);
+  state.autoSwitch = els.autoSelect.value === "1";
+  store.set("listen-large-auto", state.autoSwitch ? "1" : "0");
   setSize(els.sizeSelect.value);
   setTheme(els.themeSelect.value);
-  els.engineSelect.value = state.engine;
-  if (wasListening) {
-    stopListening().then(startListening);
-  }
 }
 
 function renderHistory() {
@@ -425,6 +429,8 @@ function renderHistory() {
   }
   for (const item of [...state.history].reverse()) {
     const row = document.createElement("li");
+    row.classList.toggle("lang-th", item.lang === "th");
+    row.classList.toggle("lang-en", item.lang === "en");
     const time = document.createElement("span");
     time.className = "history-time";
     time.textContent = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }).format(item.time);
@@ -435,18 +441,26 @@ function renderHistory() {
 
 function showRepeat() {
   const cutoff = Date.now() - 30000;
-  const text = state.history.filter((item) => item.time >= cutoff).map((item) => item.text).join(" ");
-  if (!text) return;
-  setCaption(text, "");
+  const recent = state.history.filter((item) => item.time >= cutoff);
+  if (!recent.length) return;
+  const text = recent.map((item) => item.text).join(" ");
+  setCaption(text, recent[recent.length - 1].lang);
   window.clearTimeout(state.repeatTimer);
   state.repeatTimer = window.setTimeout(() => {
-    setCaption(state.lastCaption || "Listening...", state.currentLang, !state.lastCaption);
+    if (state.lastCaption) setCaption(state.lastCaption, languageOfText(state.lastCaption, state.lang));
+    else setCaption(LANGS[state.lang].listening, "", true);
   }, REPEAT_HOLD_MS);
 }
+
+/* ---------- Events ---------- */
 
 els.listenButton.addEventListener("click", () => {
   if (state.listening) stopListening();
   else startListening();
+});
+
+els.langButton.addEventListener("click", () => {
+  switchLanguage(state.lang === "th-TH" ? "en-US" : "th-TH", { manual: true });
 });
 
 els.repeatButton.addEventListener("click", showRepeat);
@@ -456,6 +470,7 @@ els.historyButton.addEventListener("click", () => {
 });
 els.clearHistoryButton.addEventListener("click", () => {
   state.history = [];
+  saveHistory();
   renderHistory();
 });
 
@@ -469,29 +484,34 @@ els.settingsButton.addEventListener("click", () => els.settingsDialog.showModal(
 els.saveSettings.addEventListener("click", saveSettings);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && state.listening && !state.wakeLock) requestWakeLock();
+  if (document.visibilityState === "visible" && state.listening) {
+    if (!state.wakeLock) requestWakeLock();
+    if (!state.recognition) scheduleStart(); // iOS kills recognition when the app is backgrounded
+  }
 });
 
-window.addEventListener("beforeunload", stopListening);
+window.addEventListener("pagehide", () => stopListening());
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
+/* ---------- Boot ---------- */
+
 if (new URLSearchParams(location.search).get("settings") === "1") unlockSettings(true);
 else if (state.settingsUnlocked) unlockSettings(false);
 
-els.engineSelect.value = state.engine;
-els.relayUrl.value = state.relayUrl;
-els.languageSelect.value = state.language;
+els.autoSelect.value = state.autoSwitch ? "1" : "0";
 els.sizeSelect.value = state.size;
 els.themeSelect.value = state.theme;
-els.buildBadge.textContent = BUILD_MODEL;
+els.buildBadge.textContent = APP_VERSION;
 setSize(state.size);
 setTheme(state.theme);
-if (mobileNeedsRelay()) showMobileRelayPrompt();
+updateLangUi();
+updateListeningUi();
+
+if (!SpeechRecognition) showUnsupported();
 else {
   setStatus("Tap Start", "idle");
   setCaption("Tap Start to begin", "", true);
 }
-updateListeningUi();

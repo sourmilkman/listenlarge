@@ -111,7 +111,7 @@ button {
   color: var(--active);
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 18px;
   font-size: clamp(1.08rem, 3.35vw, 2.1rem);
   line-height: 1;
@@ -389,4 +389,38 @@ button {
   button:active {
     transform: scale(0.98);
   }
+}
+
+/* v1.2.0 — language button + language-coloured history */
+.status-strip {
+  position: relative;
+}
+
+.lang-button {
+  min-width: 84px;
+  min-height: 46px;
+  margin-left: auto;
+  padding: 6px 16px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  font-size: clamp(1.1rem, 3.2vw, 1.8rem);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.lang-button[data-lang="th"] {
+  color: var(--thai);
+}
+
+.lang-button[data-lang="en"] {
+  color: var(--english);
+}
+
+.history-list li.lang-th {
+  color: var(--thai);
+}
+
+.history-list li.lang-en {
+  color: var(--english);
 }

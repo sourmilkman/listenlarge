@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Listen Large Speech Test</title>
+    <style>
+      body { margin: 0; padding: 20px; background: #000; color: #fff; font: 18px/1.4 -apple-system, sans-serif; }
+      h1 { margin: 0 0 6px; font-size: 1.6rem; }
+      p { color: #aaa; margin: 0 0 16px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+      button { min-height: 52px; padding: 0 20px; border: 0; border-radius: 10px; font: inherit; font-weight: 800; }
+      .th { background: #ffd84d; } .en { background: #7dd3ff; } .stop { background: #ff6b5a; }
+      #status { font-weight: 800; color: #39ff88; margin-bottom: 12px; }
+      ol { padding-left: 22px; } li { margin-bottom: 12px; }
+      .meta { display: block; color: #aaa; font-size: 0.85rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Speech test <small style="color:#aaa">v1.2.0</small></h1>
+    <p>Pick a language, then speak. Try English while in Thai mode, and Thai while in English mode. Screenshot the results and send them back.</p>
+    <div class="row">
+      <button class="th" data-lang="th-TH">Listen in Thai</button>
+      <button class="en" data-lang="en-US">Listen in English</button>
+      <button class="stop" id="stop">Stop</button>
+    </div>
+    <div id="status">Idle</div>
+    <ol id="log"></ol>
+    <script>
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const statusEl = document.querySelector("#status");
+      const log = document.querySelector("#log");
+      let rec = null;
+      if (!SR) statusEl.textContent = "Speech recognition not supported in this browser";
+
+      function count(text) {
+        return {
+          thai: (text.match(/[฀-๿]/g) || []).length,
+          latin: (text.match(/[A-Za-z]/g) || []).length
+        };
+      }
+
+      function start(lang) {
+        if (!SR) return;
+        rec?.abort();
+        rec = new SR();
+        rec.lang = lang;
+        rec.continuous = true;
+        rec.interimResults = false;
+        rec.onstart = () => (statusEl.textContent = `Listening (${lang})`);
+        rec.onerror = (e) => (statusEl.textContent = `Error: ${e.error}`);
+        rec.onend = () => (statusEl.textContent = "Ended — tap a button to listen again");
+        rec.onresult = (e) => {
+          for (let i = e.resultIndex; i < e.results.length; i += 1) {
+            if (!e.results[i].isFinal) continue;
+            const alt = e.results[i][0];
+            const c = count(alt.transcript);
+            const li = document.createElement("li");
+            li.textContent = alt.transcript;
+            const meta = document.createElement("span");
+            meta.className = "meta";
+            meta.textContent = `mode ${lang} · confidence ${(alt.confidence || 0).toFixed(2)} · Thai chars ${c.thai} · Latin chars ${c.latin}`;
+            li.append(meta);
+            log.prepend(li);
+          }
+        };
+        try { rec.start(); } catch (err) { statusEl.textContent = `Could not start: ${err.message}`; }
+      }
+
+      document.querySelectorAll("[data-lang]").forEach((b) => b.addEventListener("click", () => start(b.dataset.lang)));
+      document.querySelector("#stop").addEventListener("click", () => { rec?.stop(); statusEl.textContent = "Stopped"; });
+    </script>
+  </body>
+</html>

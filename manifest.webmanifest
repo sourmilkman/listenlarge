@@ -1,7 +1,7 @@
 {
   "name": "Listen Large",
   "short_name": "Listen Large",
-  "description": "Large English captions with Thai-to-English translation for iPhone, iPad, and Android.",
+  "description": "Free large live captions in Thai and English for iPad, iPhone and Android.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#000000",

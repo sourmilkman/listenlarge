@@ -1,52 +1,43 @@
 # Listen Large
 
-Listen Large is a one-screen PWA for large live captions. Senior Mode is the default UI: it auto-starts, shows one large caption at a time, keeps the screen awake while listening, and exposes only Stop/Start, Repeat, and History.
+Free, one-screen live captions in large text, in **Thai or English**. Built for an iPad, and also works on iPhone and Android.
 
-## Use It From GitHub Pages
+No API keys, no server, no charges. It uses the browser's built-in speech recognition only.
 
-1. Open the repository settings on GitHub.
-2. Go to **Pages**.
-3. Set the source to **Deploy from a branch**.
-4. Choose the `main` branch and `/root`.
-5. Open the published Pages URL.
-6. Use the browser share menu and choose **Add to Home Screen** or **Install app**.
+## How it works
 
-## Caregiver Settings
+- Tap **Start**. Captions appear as people speak: **Thai in yellow, English in blue**.
+- **Auto-switch** (on by default): the app listens in one language at a time. When the speech it hears looks like the other language, it switches over. The first sentence after a switch may be missed or garbled.
+- The **ไทย / EN** button on the status bar switches language by hand. After a manual tap, auto-switch pauses for 20 seconds so it doesn't flip straight back.
+- **Repeat** shows the last 30 seconds again. **History** keeps the last 2 hours on the device.
+- The screen stays awake while listening.
 
-Settings are hidden from the daily UI. Open them by either:
+## iPad setup (one-off)
 
-- adding `?settings=1` to the app URL, or
-- tapping the **Listen Large** title five times.
+1. **Settings › General › Keyboard › Enable Dictation**: on. Make sure **Thai** is among the keyboards/dictation languages.
+2. Open the app in **Safari**, tap Share › **Add to Home Screen**.
+3. Open it from the Home Screen, tap **Start**, and allow the microphone.
 
-The settings panel controls transcription method, relay URL, browser language, text size, and white/yellow high-contrast theme. Thai/English auto-detection requires the OpenAI relay; browser speech recognition can only listen in one selected language at a time.
+If captions never appear from the Home Screen icon, try it in a normal Safari tab. Speech recognition in Home Screen apps has been less reliable on some iPadOS versions.
 
-## Transcription Options
+## Caregiver settings
 
-- **Browser speech recognition:** runs from the static app when the browser supports it.
-- **OpenAI relay endpoint:** uses the included Cloudflare Worker and OpenAI audio translations so Thai speech is returned as English text, while English speech passes through as English.
+Hidden from the daily screen. Open with `?settings=1` on the URL, or tap the **Listen Large** title five times. Settings: auto-switch on/off, text size, white/yellow theme.
 
-GitHub Pages cannot safely store private API keys, so do not put an OpenAI API key directly in the frontend.
+## Speech test page
 
-## Optional OpenAI Relay
+Open `test.html` on the iPad to see exactly what the speech engine hears in each language mode (with confidence and script counts). This is useful for tuning auto-switch.
 
-Deploy `worker/openai-relay.js` as a Cloudflare Worker and set an `OPENAI_API_KEY` secret on that Worker. Then open caregiver settings, switch **Transcription method** to **OpenAI relay endpoint**, and paste the Worker URL.
+## Hosting on GitHub Pages
 
-The app sends non-silent microphone chunks to:
+Repository **Settings › Pages ›** Deploy from a branch › `main` / root. Open the published URL.
 
-```text
-https://your-worker.example.workers.dev/transcribe
-```
+## Privacy
 
-## Local Preview
+Apple (Safari) or Google (Chrome) may process the audio on their servers to recognise speech. Nothing is sent anywhere by this app itself.
 
-Any static web server works. For example:
+## Local preview
 
 ```sh
 npx serve .
 ```
-
-Then open the local URL in a browser.
-
-## Privacy Note
-
-Browser speech recognition may use the browser vendor's speech service. OpenAI relay mode sends short non-silent audio chunks to your relay endpoint and then to OpenAI for translation/transcription.
